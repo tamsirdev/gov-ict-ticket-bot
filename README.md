@@ -1,43 +1,133 @@
-# Government ICT Service Ticket Bot (WhatsApp version)
+# Government ICT Service Ticket Bot
 
-This version of the bot uses **WhatsApp** via the **Twilio API**, which is much more common for government and public services in many regions.
+A smart helpdesk system for government ICT departments. Citizens submit issues via a web form (or WhatsApp), the bot auto-categorizes and priorities them, and ICT officers manage tickets through an admin dashboard.
 
-## How it Works
-1. **User Submission**: User sends a WhatsApp message.
-2. **Webhook**: Twilio sends the message to our Flask application.
-3. **AI Triage**: OpenAI categorizes and prioritizes the issue.
-4. **Storage**: Data is saved in SQLite.
-
-## Prerequisites
-- A **Twilio Account** (Free trial works).
-- An **OpenAI API Key**.
-- **ngrok** (for local testing to expose your local port 5000 to the internet).
-
-## Setup Instructions
-
-1. **Twilio Sandbox Setup**:
-   - Go to the Twilio Console -> Messaging -> Try it Out -> WhatsApp Sandbox.
-   - Follow instructions to join the sandbox on your phone.
-   - Set the Webhook URL to your ngrok URL (e.g., `https://your-id.ngrok-free.app/whatsapp`).
-
-2. **Configure `.env`**:
-   ```env
-   OPENAI_API_KEY=your_openai_key
-   TWILIO_ACCOUNT_SID=your_sid (optional for this simple version)
-   TWILIO_AUTH_TOKEN=your_token (optional for this simple version)
-   ```
-
-3. **Run the Bot**:
-   ```bash
-   pip install -r requirements.txt
-   python bot.py
-   ```
-
-4. **Expose with ngrok**:
-   ```bash
-   ngrok http 5000
-   ```
-   (Copy the forwarding URL into your Twilio Sandbox settings).
+**No API keys required to run** — works immediately with built-in rule-based triage and a web UI. OpenAI and WhatsApp/Twilio can be enabled later as upgrades.
 
 ---
-Developed for [Tamsir Njie's Portfolio](https://tamsirdev.github.io/Personal-Portfolio/)
+
+## Features
+
+- **Web portal** — Submit tickets and check status from any browser
+- **WhatsApp support** *(optional, requires Twilio)* — Submit tickets via WhatsApp
+- **Smart triage** — AI-powered (OpenAI) or free rule-based categorization: Hardware, Software, Network, Account
+- **Priority assignment** — Auto-tags tickets as Critical, High, Medium, or Low
+- **Admin dashboard** — View, filter, and update ticket statuses
+- **Persistent storage** — SQLite database, no external services needed
+- **Containerized** — Docker & Docker Compose support
+- **CI/CD** — GitHub Actions pipeline: lint, test, build
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/tamsirdev/gov-ict-ticket-bot.git
+cd gov-ict-ticket-bot
+
+# Run without any API keys
+pip install -r requirements.txt
+python bot.py
+```
+
+Open **http://localhost:5000** — you're ready to submit tickets.
+
+### With Docker
+
+```bash
+docker compose up
+```
+
+Visit **http://localhost:5000**.
+
+---
+
+## How It Works
+
+```
+Citizen → Web Form → Flask App → Triage Engine → SQLite → Admin Dashboard
+                                    │
+                                ┌───┴───┐
+                            Free AI    OpenAI
+                        (rule-based)   (paid key)
+```
+
+1. A citizen describes their issue via the web form
+2. The triage engine categorizes and priorities it
+3. The ticket is saved to the database
+4. The citizen gets a confirmation with their ticket number
+5. ICT officers manage tickets in the admin dashboard at `/admin`
+
+---
+
+## User Guide
+
+### Submitting a Ticket
+
+1. Open the app in your browser
+2. Enter your name, phone number, and describe the issue
+3. Click **Submit Ticket** — you'll receive a ticket ID
+4. Save the ID to check status later
+
+### Checking Ticket Status
+
+- Click **Check Existing Ticket Status** on the home page
+- Enter your phone number to see all your tickets
+
+### Admin Dashboard
+
+- Visit **/admin** and log in (default password: `admin`)
+- View all tickets sorted by priority
+- Filter by status (Open, In Progress, Resolved, Closed)
+- Update ticket statuses as work progresses
+
+---
+
+## Upgrading to Paid Features
+
+| Feature | Free | With API Key |
+|---------|------|-------------|
+| Triage | Rule-based keywords | OpenAI GPT-3.5 |
+| Interface | Web UI only | Web UI + WhatsApp |
+| Cost | Free | OpenAI & Twilio usage |
+
+### Enable OpenAI Triage
+
+```env
+OPENAI_API_KEY=sk-your-key-here
+```
+
+### Enable WhatsApp
+
+```env
+TWILIO_ACCOUNT_SID=your_sid
+TWILIO_AUTH_TOKEN=your_token
+```
+
+Then set your Twilio sandbox webhook to `https://your-url/whatsapp`.
+
+---
+
+## Project Structure
+
+```
+├── bot.py              # Flask application (routes, web UI, admin, webhook)
+├── ai_triage.py        # Triage engine (free rule-based + OpenAI fallback)
+├── database.py         # SQLite database layer
+├── templates/          # HTML templates
+│   ├── index.html
+│   ├── ticket.html
+│   ├── status_form.html
+│   ├── status.html
+│   ├── admin.html
+│   └── admin_login.html
+├── tests/              # Pytest test suite
+├── Dockerfile          # Production container (gunicorn, multi-stage)
+├── docker-compose.yml  # One-command deployment
+├── .github/workflows/  # CI/CD pipeline
+└── pyproject.toml       # Ruff & pytest config
+```
+
+---
+
+**Developed by Tamsir Njie** · [Portfolio](https://tamsirdev.github.io/Personal-Portfolio/)
