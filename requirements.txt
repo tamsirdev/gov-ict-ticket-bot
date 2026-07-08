@@ -1,4 +1,11 @@
-twilio
 flask
-openai
 python-dotenv
+gunicorn
+
+# triage backends
+openai
+twilio
+
+# dev / ci
+pytest
+ruff

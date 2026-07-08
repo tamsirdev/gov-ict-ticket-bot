@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_SECRET=${FLASK_SECRET:-dev-secret-change-in-production}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+    volumes:
+      - tickets_data:/app/tickets.db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  tickets_data:

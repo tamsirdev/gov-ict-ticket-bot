@@ -1,66 +1,189 @@
+import functools
+import logging
 import os
-from flask import Flask, request
-from twilio.twiml.messaging_response import MessagingResponse
+
 from dotenv import load_dotenv
-from database import init_db, create_ticket, get_user_tickets
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+
 from ai_triage import triage_issue
+from database import (
+    create_ticket,
+    get_all_tickets,
+    get_user_tickets,
+    init_db,
+    update_ticket_status,
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("bot")
 
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET", "dev-secret-change-in-production")
 
-# Initialize DB on startup
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
+VALID_STATUSES = ["Open", "In Progress", "Resolved", "Closed"]
+
 init_db()
 
-@app.route("/whatsapp", methods=['POST'])
+USE_TWILIO = os.getenv("TWILIO_ACCOUNT_SID") and os.getenv("TWILIO_AUTH_TOKEN")
+
+if USE_TWILIO:
+    from twilio.twiml.messaging_response import MessagingResponse
+
+# ── Health check (used by Docker / k8s) ────────────────────────────────
+
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
+
+
+# ── Web UI (free, no API keys needed) ──────────────────────────────────
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/submit", methods=["POST"])
+def submit_ticket():
+    username = request.form.get("name", "").strip()
+    phone = request.form.get("phone", "").strip()
+    description = request.form.get("description", "").strip()
+
+    if not description:
+        return render_template("index.html", error="Please describe your issue.")
+
+    category, priority = triage_issue(description)
+    ticket_id = create_ticket(phone, username, description, category, priority)
+    return render_template(
+        "ticket.html",
+        ticket_id=ticket_id,
+        category=category,
+        priority=priority,
+        username=username,
+    )
+
+
+@app.route("/status", methods=["GET", "POST"])
+def check_status():
+    if request.method == "POST":
+        phone = request.form.get("phone", "").strip()
+        return redirect(url_for("user_tickets", phone=phone))
+    return render_template("status_form.html")
+
+
+@app.route("/status/<phone>")
+def user_tickets(phone):
+    tickets = get_user_tickets(phone)
+    return render_template("status.html", tickets=tickets, phone=phone)
+
+
+# ── Admin dashboard ────────────────────────────────────────────────────
+
+
+def admin_required(f):
+    @functools.wraps(f)
+    def wrapped(*args, **kwargs):
+        if not session.get("admin_logged_in"):
+            return redirect(url_for("admin_login"))
+        return f(*args, **kwargs)
+
+    return wrapped
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    error = None
+    if request.method == "POST":
+        if request.form.get("password") == ADMIN_PASSWORD:
+            session["admin_logged_in"] = True
+            return redirect(url_for("admin_dashboard"))
+        error = "Wrong password"
+    return render_template("admin_login.html", error=error)
+
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.pop("admin_logged_in", None)
+    return redirect(url_for("admin_login"))
+
+
+@app.route("/admin")
+@admin_required
+def admin_dashboard():
+    status_filter = request.args.get("status", "")
+    tickets = get_all_tickets()
+    if status_filter:
+        tickets = [t for t in tickets if t["status"] == status_filter]
+    return render_template(
+        "admin.html",
+        tickets=tickets,
+        statuses=VALID_STATUSES,
+        current_filter=status_filter,
+    )
+
+
+@app.route("/admin/update/<int:ticket_id>", methods=["POST"])
+@admin_required
+def admin_update_status(ticket_id):
+    new_status = request.form.get("status")
+    if new_status in VALID_STATUSES:
+        update_ticket_status(ticket_id, new_status)
+    return redirect(url_for("admin_dashboard", status=request.args.get("status", "")))
+
+
+# ── WhatsApp / Twilio webhook (paid, requires API keys) ────────────────
+
+
+@app.route("/whatsapp", methods=["POST"])
 def whatsapp_webhook():
-    # Get message details from Twilio request
-    incoming_msg = request.values.get('Body', '').strip()
-    sender_number = request.values.get('From', '') # Format: whatsapp:+220XXXXXXX
-    username = request.values.get('ProfileName', 'User')
+    incoming_msg = request.values.get("Body", "").strip()
+    sender_number = request.values.get("From", "")
+    username = request.values.get("ProfileName", "User")
 
     resp = MessagingResponse()
     msg = resp.message()
 
-    if incoming_msg.lower() == 'status':
-        # Handle status request
+    if incoming_msg.lower() in ("status", "check"):
         tickets = get_user_tickets(sender_number)
         if not tickets:
-            msg.body("🔍 You have no active tickets.")
+            msg.body("You have no active tickets.")
         else:
-            response_text = "🔍 *Your Tickets:*\n\n"
+            lines = ["*Your Tickets:*"]
             for t in tickets:
-                response_text += f"• #{t[0]} | Status: {t[1]} | {t[2]} ({t[3]})\n"
-            msg.body(response_text)
-            
-    elif incoming_msg.lower() == 'start' or incoming_msg.lower() == 'hi':
-        msg.body("👋 *Welcome to the Government ICT Support Bot.*\n\nPlease describe the technical issue you are facing in detail.")
-        
+                lines.append(f"- #{t[0]} | Status: {t[1]} | {t[2]} ({t[3]})")
+            msg.body("\n".join(lines))
+
+    elif incoming_msg.lower() in ("start", "hi", "hello"):
+        msg.body(
+            "Welcome to the Government ICT Support Bot.\n\n"
+            "Describe your technical issue and a ticket will be created.\n"
+            "Reply 'status' to check your tickets."
+        )
+
     else:
-        # Assume it's a new ticket description
-        # 1. AI Triage
         category, priority = triage_issue(incoming_msg)
-        
-        # 2. Save to Database
         ticket_id = create_ticket(
-            user_id=sender_number,
-            username=username,
-            description=incoming_msg,
-            category=category,
-            priority=priority
+            sender_number, username, incoming_msg, category, priority
         )
-        
-        response_text = (
-            f"✅ *Ticket Created!*\n\n"
-            f"*Ticket ID:* #{ticket_id}\n"
-            f"*Category:* {category}\n"
-            f"*Priority:* {priority}\n\n"
-            f"Our team has been notified. Type 'status' to check progress."
+        msg.body(
+            f"Ticket #{ticket_id} created!\n"
+            f"Category: {category}\n"
+            f"Priority: {priority}\n\n"
+            "Reply 'status' for updates."
         )
-        msg.body(response_text)
 
     return str(resp)
 
+
 if __name__ == "__main__":
-    # For local development, we run on port 5000
-    app.run(port=5000)
+    mode = "FREE (web UI)" if not USE_TWILIO else "web UI + WhatsApp"
+    log.info("Starting in %s mode on port 5000", mode)
+    app.run(port=5000, debug=True)  # noqa: S201

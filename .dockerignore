@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+tickets.db
+.git/
+.github/
+.pytest_cache/
+.DS_Store
+README.md
+DOCUMENTATION.md
